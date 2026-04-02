@@ -8,11 +8,11 @@ const REGION_MAP = [
   },
   {
     region: 'Rzeszów',
-    keywords: ['rzeszow', 'rzeszów', '/PEC/PEC/', '/ORP/'],
+    keywords: ['rzeszow', 'rzeszów', '/ORZ/'],
   },
   {
     region: 'Łódź',
-    keywords: ['łódź', 'łodzi', 'łódzk', 'lodzi', '/OL/'],
+    keywords: ['łódź', 'łodzi', 'łódzk', 'lodz', '/OL/'],
   },
   {
     region: 'Warszawa',
