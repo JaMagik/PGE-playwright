@@ -19,7 +19,8 @@ const REGION_KEYWORDS = ['Skarżysko', 'Rzeszów', 'Łódź', 'Warszawa'];
     render_js: 'true',
     premium_proxy: 'true',
     country_code: 'pl',
-    wait: '5000',
+    wait: '8000',
+    wait_for: 'table',
     json_response: 'false',
   });
 
@@ -69,7 +70,6 @@ const REGION_KEYWORDS = ['Skarżysko', 'Rzeszów', 'Łódź', 'Warszawa'];
   for (const row of rows) {
     console.log('Region:', row.region, '| Tekst:', row.rowText.substring(0, 100));
 
-    // Znajdź datę w komórkach (format dd.mm.yyyy)
     const dateMatch = row.rowText.match(/(\d{2})\.(\d{2})\.(\d{4})/);
     const deadline = dateMatch
       ? `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}`
@@ -100,10 +100,9 @@ const REGION_KEYWORDS = ['Skarżysko', 'Rzeszów', 'Łódź', 'Warszawa'];
     else console.log('✓ Zapisano:', title.substring(0, 60));
   }
 
-  // Wypisz też fragment HTML do debugowania jeśli 0 wyników
   if (rows.length === 0) {
-    console.log('Brak wyników - fragment HTML do analizy:');
-    console.log(html.substring(500, 2000));
+    console.log('Brak wyników - fragment HTML 2000-5000:');
+    console.log(html.substring(2000, 5000));
   }
 
   console.log('Gotowe!');
