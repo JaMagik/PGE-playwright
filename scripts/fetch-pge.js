@@ -4,12 +4,7 @@ const { createClient } = require('@supabase/supabase-js');
 
 chromium.use(StealthPlugin());
 
-const REGION_KEYWORDS = {
-  'Skarżysko': 'Skarżysko',
-  'Rzeszów': 'Rzeszów',
-  'Łódź': 'Łódź',
-  'Warszawa': 'Warszawa',
-};
+const REGION_KEYWORDS = ['Skarżysko', 'Rzeszów', 'Łódź', 'Warszawa'];
 
 (async () => {
   const supabase = createClient(
@@ -24,35 +19,73 @@ const REGION_KEYWORDS = {
   });
   const page = await context.newPage();
 
+  // Przechwytuj wszystkie requesty API
+  const apiResponses = [];
+  page.on('response', async (response) => {
+    const url = response.url();
+    const contentType = response.headers()['content-type'] || '';
+    if (
+      contentType.includes('application/json') ||
+      url.includes('/api/') ||
+      url.includes('/rest/') ||
+      url.includes('/notice') ||
+      url.includes('/demand') ||
+      url.includes('/tender')
+    ) {
+      try {
+        const body = await response.text();
+        if (body && body.length > 10 && body.length < 500000) {
+          apiResponses.push({ url, status: response.status(), body: body.substring(0, 1000) });
+          console.log('API response:', url, response.status());
+        }
+      } catch (e) {}
+    }
+  });
+
   console.log('Otwieranie portalu PGE SWPP2...');
   await page.goto(
     'https://swpp2.gkpge.pl/app/demand/notice/public/current/list',
     { waitUntil: 'networkidle', timeout: 60000 }
   );
-  await page.waitForTimeout(4000);
+  await page.waitForTimeout(5000);
 
-  // Wypisz zawartość wszystkich wierszy tabeli
-  const rowsData = await page.evaluate(() => {
-    const rows = document.querySelectorAll('tbody tr');
-    return Array.from(rows).map(row => ({
-      text: row.innerText?.trim().substring(0, 200),
-      html: row.innerHTML?.substring(0, 300),
-      links: Array.from(row.querySelectorAll('a')).map(a => ({
-        text: a.innerText?.trim(),
-        href: a.href
-      }))
-    }));
-  });
+  if (apiResponses.length === 0) {
+    console.log('Brak odpowiedzi API - sprawdzam wszystkie requesty...');
+    // Wypisz WSZYSTKIE requesty jakie poszły
+    const allRequests = [];
+    page.on('request', req => {
+      allRequests.push(req.url());
+    });
+    // Odpal scroll żeby wymusić lazy load
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForTimeout(3000);
+    console.log('Requesty:', JSON.stringify(allRequests.slice(0, 30)));
+  } else {
+    console.log('Znalezione API responses:');
+    apiResponses.forEach(r => {
+      console.log('URL:', r.url);
+      console.log('Body:', r.body);
+      console.log('---');
+    });
+  }
 
-  console.log('Wiersze tabeli:');
-  rowsData.forEach((r, i) => console.log(`Row ${i}:`, JSON.stringify(r)));
-
-  // Wypisz wszystkie linki do notice/demand
-  const allLinks = await page.evaluate(() => {
-    return Array.from(document.querySelectorAll('a[href*="notice"], a[href*="demand"]'))
-      .map(a => ({ text: a.innerText?.trim(), href: a.href }));
-  });
-  console.log('Wszystkie linki:', JSON.stringify(allLinks));
+  // Spróbuj też bezpośrednio uderzyć w REST API PGE
+  console.log('Próba bezpośredniego API...');
+  try {
+    const cookies = await context.cookies();
+    const cookieStr = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+    
+    const apiUrl = 'https://swpp2.gkpge.pl/api/demand/notice/public/current/list';
+    const resp = await page.evaluate(async (url) => {
+      const r = await fetch(url, { credentials: 'include' });
+      const text = await r.text();
+      return { status: r.status, body: text.substring(0, 2000) };
+    }, apiUrl);
+    console.log('Bezposrednie API:', JSON.stringify(resp));
+  } catch (e) {
+    console.log('Blad bezposredniego API:', e.message);
+  }
 
   await browser.close();
+  console.log('Gotowe');
 })();
