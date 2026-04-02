@@ -1,0 +1,80 @@
+name: Fetch PGE Tenders
+
+on:
+  schedule:
+    - cron: '0 7,13,19 * * 1-5'   # pon-pt o 7:00, 13:00, 19:00
+  workflow_dispatch:                 # przycisk ręcznego uruchomienia
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Install Playwright browsers
+        run: npx playwright install chromium --with-deps
+        
+      - name: Fetch PGE tenders
+        run: node scripts/fetch-pge.js
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          
+      - name: Report status
+        if: failure()
+        run: echo "Scraper nie powiódł się - sprawdź logi powyżej"
+```
+
+---
+
+## ETAP 3 — Dopięcie w Lovable (5 min)
+
+### Prompt do Lovable #3 — real-time odświeżanie
+```
+Na stronie Przetargi dodaj:
+1. Subskrypcję Supabase Realtime na tabeli "tenders" 
+   - gdy pojawi się nowy rekord (INSERT), odśwież listę i pokaż toast 
+     "Pobrano nowe przetargi PGE"
+2. Przycisk "Pobierz przetargi PGE" w headerze niech pokazuje spinner 
+   przez 3 sekundy i wyświetla toast "Synchronizacja odbywa się automatycznie 
+   3x dziennie. Ostatnie pobieranie: [data z raw_data.scraped_at]"
+3. Na każdej karcie przetargu pokaż badge "NOWY" przez pierwsze 24h 
+   od created_at
+```
+
+### Prompt do Lovable #4 — obsługa błędów i pustych kolumn
+```
+Na tablicy Kanban przetargów:
+1. Jeśli kolumna regionu jest pusta, pokaż placeholder 
+   "Brak aktywnych przetargów w tym regionie"
+2. Posortuj karty w kolumnie od najbliższego deadline do najdalszego
+3. Karty z deadline w ciągu 7 dni pokaż z czerwoną lewą krawędzią
+4. Dodaj licznik przetargów w nagłówku każdej kolumny (już masz to 
+   dla Skarżysko: 1, Rzeszów: 1)
+```
+
+---
+
+## Jak to wszystko działa razem
+```
+GitHub Actions (3x dziennie)
+    → Playwright otwiera PGE z prawdziwym Chrome + stealth
+    → Parsuje przetargi dla 4 regionów
+    → Upsert do Supabase
+
+Supabase Realtime
+    → Powiadamia Twoją aplikację o nowych rekordach
+
+Lovable (frontend)
+    → Tablice Kanban pobierają dane z Supabase
+    → Grupują po kolumnie "region"
+    → Odświeżają się automatycznie
