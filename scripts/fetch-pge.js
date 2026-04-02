@@ -4,7 +4,19 @@ const { createClient } = require('@supabase/supabase-js');
 
 chromium.use(StealthPlugin());
 
+const REGION_KEYWORDS = {
+  'Skarżysko': 'Skarżysko',
+  'Rzeszów': 'Rzeszów',
+  'Łódź': 'Łódź',
+  'Warszawa': 'Warszawa',
+};
+
 (async () => {
+  const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_KEY
+  );
+
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/121.0.0.0 Safari/537.36',
@@ -17,37 +29,30 @@ chromium.use(StealthPlugin());
     'https://swpp2.gkpge.pl/app/demand/notice/public/current/list',
     { waitUntil: 'networkidle', timeout: 60000 }
   );
+  await page.waitForTimeout(4000);
 
-  // Czekaj chwilę na JS
-  await page.waitForTimeout(3000);
-
-  // DIAGNOSTYKA - wypisz tytuł i fragment HTML
-  const title = await page.title();
-  console.log('Tytul strony:', title);
-
-  const url = page.url();
-  console.log('Aktualny URL:', url);
-
-  // Wypisz pierwsze 3000 znaków HTML body
-  const bodyHTML = await page.evaluate(() => document.body.innerHTML.substring(0, 3000));
-  console.log('Fragment HTML:', bodyHTML);
-
-  // Sprawdz dostepne selektory
-  const selectors = await page.evaluate(() => {
-    const results = {};
-    results['table'] = document.querySelectorAll('table').length;
-    results['tr'] = document.querySelectorAll('tr').length;
-    results['tbody tr'] = document.querySelectorAll('tbody tr').length;
-    results['.tender'] = document.querySelectorAll('[class*="tender"]').length;
-    results['.notice'] = document.querySelectorAll('[class*="notice"]').length;
-    results['.list'] = document.querySelectorAll('[class*="list"]').length;
-    results['.row'] = document.querySelectorAll('[class*="row"]').length;
-    results['a[href*="notice"]'] = document.querySelectorAll('a[href*="notice"]').length;
-    results['a[href*="demand"]'] = document.querySelectorAll('a[href*="demand"]').length;
-    return results;
+  // Wypisz zawartość wszystkich wierszy tabeli
+  const rowsData = await page.evaluate(() => {
+    const rows = document.querySelectorAll('tbody tr');
+    return Array.from(rows).map(row => ({
+      text: row.innerText?.trim().substring(0, 200),
+      html: row.innerHTML?.substring(0, 300),
+      links: Array.from(row.querySelectorAll('a')).map(a => ({
+        text: a.innerText?.trim(),
+        href: a.href
+      }))
+    }));
   });
-  console.log('Selektory:', JSON.stringify(selectors, null, 2));
+
+  console.log('Wiersze tabeli:');
+  rowsData.forEach((r, i) => console.log(`Row ${i}:`, JSON.stringify(r)));
+
+  // Wypisz wszystkie linki do notice/demand
+  const allLinks = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll('a[href*="notice"], a[href*="demand"]'))
+      .map(a => ({ text: a.innerText?.trim(), href: a.href }));
+  });
+  console.log('Wszystkie linki:', JSON.stringify(allLinks));
 
   await browser.close();
-  console.log('Diagnostyka zakonczona');
 })();
