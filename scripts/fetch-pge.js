@@ -13,97 +13,59 @@ const REGION_KEYWORDS = ['Skarżysko', 'Rzeszów', 'Łódź', 'Warszawa'];
   const url = 'https://swpp2.gkpge.pl/app/demand/notice/public/current/list';
   const apiKey = process.env.SCRAPINGBEE_API_KEY;
 
-  const scrapingBeeUrl = 'https://app.scrapingbee.com/api/v1/?' + new URLSearchParams({
+  // Scenariusz JS - czekaj na załadowanie wierszy tabeli
+  const jsScenario = JSON.stringify({
+    instructions: [
+      { wait: 8000 },
+      { wait_for: 'tr' },
+      { wait: 3000 }
+    ]
+  });
+
+  const params = new URLSearchParams({
     api_key: apiKey,
     url: url,
     render_js: 'true',
     premium_proxy: 'true',
     country_code: 'pl',
-    wait: '8000',
-    wait_for: 'table',
+    js_scenario: jsScenario,
     json_response: 'false',
   });
 
-  const response = await fetch(scrapingBeeUrl);
+  const response = await fetch('https://app.scrapingbee.com/api/v1/?' + params);
   const html = await response.text();
 
   console.log('Status ScrapingBee:', response.status);
-  console.log('Pierwsze 500 znaków HTML:', html.substring(0, 500));
 
-  if (response.status !== 200 || html.includes('odrzucona')) {
-    console.log('ScrapingBee nie przeszło przez ochronę');
+  if (response.status !== 200) {
+    console.log('Błąd ScrapingBee:', html.substring(0, 500));
     process.exit(1);
   }
 
-  // Parsowanie HTML - szukamy wierszy tabeli
-  const rows = [];
-  const trRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-  const tdRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
-  const linkRegex = /href="([^"]*notice[^"]*)"/i;
-  const stripTags = s => s.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  // Sprawdź ile jest wierszy tabeli w HTML
+  const trCount = (html.match(/<tr/gi) || []).length;
+  const tdCount = (html.match(/<td/gi) || []).length;
+  console.log(`Znaleziono w HTML: ${trCount} tr, ${tdCount} td`);
 
-  let trMatch;
-  while ((trMatch = trRegex.exec(html)) !== null) {
-    const rowHtml = trMatch[1];
-    const cells = [];
-    let tdMatch;
-    while ((tdMatch = tdRegex.exec(rowHtml)) !== null) {
-      cells.push(stripTags(tdMatch[1]));
-    }
-    if (cells.length < 2) continue;
-
-    const rowText = cells.join(' ');
-    const linkMatch = linkRegex.exec(rowHtml);
-    const href = linkMatch ? 'https://swpp2.gkpge.pl' + linkMatch[1] : '';
-
-    const matchedRegion = REGION_KEYWORDS.find(r =>
-      rowText.toLowerCase().includes(r.toLowerCase())
-    );
-
-    if (matchedRegion && rowText.toLowerCase().includes('pge')) {
-      rows.push({ cells, href, region: matchedRegion, rowText });
-    }
+  // Wypisz fragment gdzie powinna być tabela
+  const tableIndex = html.indexOf('<table');
+  if (tableIndex > -1) {
+    console.log('Fragment tabeli:', html.substring(tableIndex, tableIndex + 3000));
+  } else {
+    console.log('Brak tagu table - szukam danych...');
+    // Szukaj charakterystycznych fragmentów
+    const searchTerms = ['Skarżysko', 'Rzeszów', 'Łódź', 'Warszawa', 'PGE', 'przetarg', 'notice'];
+    searchTerms.forEach(term => {
+      const idx = html.indexOf(term);
+      if (idx > -1) {
+        console.log(`Znaleziono "${term}" na pozycji ${idx}:`, html.substring(idx - 50, idx + 200));
+      }
+    });
+    // Wypisz środkową część HTML
+    const mid = Math.floor(html.length / 2);
+    console.log('Środek HTML:', html.substring(mid, mid + 2000));
   }
 
-  console.log(`Znaleziono ${rows.length} przetargów PGE dla docelowych regionów`);
-
-  for (const row of rows) {
-    console.log('Region:', row.region, '| Tekst:', row.rowText.substring(0, 100));
-
-    const dateMatch = row.rowText.match(/(\d{2})\.(\d{2})\.(\d{4})/);
-    const deadline = dateMatch
-      ? `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}`
-      : null;
-
-    const title = row.cells[1] || row.cells[0] || row.rowText.substring(0, 100);
-    const buyer = row.cells.find(c => c.toLowerCase().includes('pge')) || 'PGE';
-    const externalId = row.href
-      ? row.href.split('/').pop()
-      : Buffer.from(title).toString('base64').substring(0, 20);
-
-    const { error } = await supabase.from('tenders').upsert({
-      external_id: externalId,
-      title: title,
-      source: 'PGE',
-      region: row.region,
-      status: 'Nowy',
-      deadline: deadline,
-      url: row.href || url,
-      raw_data: {
-        buyer: buyer,
-        scraped_at: new Date().toISOString(),
-        cells: row.cells,
-      },
-    }, { onConflict: 'external_id' });
-
-    if (error) console.error('Błąd upsert:', error.message);
-    else console.log('✓ Zapisano:', title.substring(0, 60));
-  }
-
-  if (rows.length === 0) {
-    console.log('Brak wyników - fragment HTML 2000-5000:');
-    console.log(html.substring(2000, 5000));
-  }
-
+  console.log('Długość HTML:', html.length);
   console.log('Gotowe!');
 })();
