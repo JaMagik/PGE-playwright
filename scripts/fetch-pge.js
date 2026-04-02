@@ -1,8 +1,4 @@
-const { chromium } = require('playwright-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const { createClient } = require('@supabase/supabase-js');
-
-chromium.use(StealthPlugin());
 
 const REGION_KEYWORDS = ['Skarżysko', 'Rzeszów', 'Łódź', 'Warszawa'];
 
@@ -12,104 +8,103 @@ const REGION_KEYWORDS = ['Skarżysko', 'Rzeszów', 'Łódź', 'Warszawa'];
     process.env.SUPABASE_SERVICE_KEY
   );
 
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/121.0.0.0 Safari/537.36',
-    locale: 'pl-PL',
-    viewport: { width: 1280, height: 800 },
-  });
-  const page = await context.newPage();
+  console.log('Pobieranie przez ScrapingBee...');
 
-  // Zbieraj WSZYSTKIE odpowiedzi JSON/API
-  const captured = [];
-  page.on('response', async (response) => {
-    const url = response.url();
-    if (url.includes('/TSPD/')) return; // ignoruj challenge
-    try {
-      const body = await response.text();
-      if (!body || body.length < 5) return;
-      // Złap wszystko co wygląda na dane (JSON lub XML z danymi)
-      if (
-        body.includes('notice') ||
-        body.includes('demand') ||
-        body.includes('tender') ||
-        body.includes('przetarg') ||
-        body.startsWith('[') ||
-        body.startsWith('{"') ||
-        (body.startsWith('{') && body.includes('data'))
-      ) {
-        captured.push({ url, status: response.status(), body: body.substring(0, 3000) });
-      }
-    } catch (e) {}
+  const url = 'https://swpp2.gkpge.pl/app/demand/notice/public/current/list';
+  const apiKey = process.env.SCRAPINGBEE_API_KEY;
+
+  const scrapingBeeUrl = 'https://app.scrapingbee.com/api/v1/?' + new URLSearchParams({
+    api_key: apiKey,
+    url: url,
+    render_js: 'true',
+    premium_proxy: 'true',
+    country_code: 'pl',
+    wait: '5000',
+    json_response: 'false',
   });
 
-  console.log('Ładowanie strony PGE...');
-  await page.goto(
-    'https://swpp2.gkpge.pl/app/demand/notice/public/current/list',
-    { waitUntil: 'load', timeout: 60000 }
-  );
+  const response = await fetch(scrapingBeeUrl);
+  const html = await response.text();
 
-  // Czekaj aż challenge F5 się rozwiąże (do 30s)
-  console.log('Czekam na przejście challenge F5...');
-  try {
-    await page.waitForFunction(
-      () => !document.body.innerHTML.includes('bobcmn') && document.querySelectorAll('tbody tr').length > 0,
-      { timeout: 30000 }
-    );
-    console.log('Challenge przeszedł, tabela załadowana!');
-  } catch (e) {
-    console.log('Timeout na challenge, próbuję mimo to...');
+  console.log('Status ScrapingBee:', response.status);
+  console.log('Pierwsze 500 znaków HTML:', html.substring(0, 500));
+
+  if (response.status !== 200 || html.includes('odrzucona')) {
+    console.log('ScrapingBee nie przeszło przez ochronę');
+    process.exit(1);
   }
 
-  await page.waitForTimeout(5000);
+  // Parsowanie HTML - szukamy wierszy tabeli
+  const rows = [];
+  const trRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  const tdRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+  const linkRegex = /href="([^"]*notice[^"]*)"/i;
+  const stripTags = s => s.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 
-  // Sprawdź czy tabela ma dane
-  const tableRows = await page.evaluate(() => document.querySelectorAll('tbody tr').length);
-  console.log('Wiersze w tabeli po czekaniu:', tableRows);
-
-  // Próbuj pobrać dane przez fetch z cookies sesji (już po challengu)
-  const apiData = await page.evaluate(async () => {
-    const endpoints = [
-      '/api/demand/notice/public/current/list',
-      '/api/demand/notice/public/list',
-      '/app/demand/notice/public/current/list?format=json',
-    ];
-    const results = [];
-    for (const ep of endpoints) {
-      try {
-        const r = await fetch(ep, {
-          credentials: 'include',
-          headers: {
-            'Accept': 'application/json, text/plain, */*',
-            'X-Requested-With': 'XMLHttpRequest',
-          }
-        });
-        const text = await r.text();
-        results.push({ ep, status: r.status, body: text.substring(0, 2000) });
-      } catch (e) {
-        results.push({ ep, error: e.message });
-      }
+  let trMatch;
+  while ((trMatch = trRegex.exec(html)) !== null) {
+    const rowHtml = trMatch[1];
+    const cells = [];
+    let tdMatch;
+    while ((tdMatch = tdRegex.exec(rowHtml)) !== null) {
+      cells.push(stripTags(tdMatch[1]));
     }
-    return results;
-  });
+    if (cells.length < 2) continue;
 
-  console.log('Wyniki API:');
-  apiData.forEach(r => console.log(JSON.stringify(r)));
+    const rowText = cells.join(' ');
+    const linkMatch = linkRegex.exec(rowHtml);
+    const href = linkMatch ? 'https://swpp2.gkpge.pl' + linkMatch[1] : '';
 
-  // Wypisz złapane odpowiedzi
-  console.log(`\nZłapane odpowiedzi (${captured.length}):`);
-  captured.forEach(c => {
-    console.log('URL:', c.url);
-    console.log('Body:', c.body.substring(0, 500));
-    console.log('---');
-  });
+    const matchedRegion = REGION_KEYWORDS.find(r =>
+      rowText.toLowerCase().includes(r.toLowerCase())
+    );
 
-  // Wypisz aktualny HTML tabeli
-  const tableHTML = await page.evaluate(() => {
-    const tbody = document.querySelector('tbody');
-    return tbody ? tbody.innerHTML.substring(0, 2000) : 'brak tbody';
-  });
-  console.log('HTML tabeli:', tableHTML);
+    if (matchedRegion && rowText.toLowerCase().includes('pge')) {
+      rows.push({ cells, href, region: matchedRegion, rowText });
+    }
+  }
 
-  await browser.close();
+  console.log(`Znaleziono ${rows.length} przetargów PGE dla docelowych regionów`);
+
+  for (const row of rows) {
+    console.log('Region:', row.region, '| Tekst:', row.rowText.substring(0, 100));
+
+    // Znajdź datę w komórkach (format dd.mm.yyyy)
+    const dateMatch = row.rowText.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+    const deadline = dateMatch
+      ? `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}`
+      : null;
+
+    const title = row.cells[1] || row.cells[0] || row.rowText.substring(0, 100);
+    const buyer = row.cells.find(c => c.toLowerCase().includes('pge')) || 'PGE';
+    const externalId = row.href
+      ? row.href.split('/').pop()
+      : Buffer.from(title).toString('base64').substring(0, 20);
+
+    const { error } = await supabase.from('tenders').upsert({
+      external_id: externalId,
+      title: title,
+      source: 'PGE',
+      region: row.region,
+      status: 'Nowy',
+      deadline: deadline,
+      url: row.href || url,
+      raw_data: {
+        buyer: buyer,
+        scraped_at: new Date().toISOString(),
+        cells: row.cells,
+      },
+    }, { onConflict: 'external_id' });
+
+    if (error) console.error('Błąd upsert:', error.message);
+    else console.log('✓ Zapisano:', title.substring(0, 60));
+  }
+
+  // Wypisz też fragment HTML do debugowania jeśli 0 wyników
+  if (rows.length === 0) {
+    console.log('Brak wyników - fragment HTML do analizy:');
+    console.log(html.substring(500, 2000));
+  }
+
+  console.log('Gotowe!');
 })();
