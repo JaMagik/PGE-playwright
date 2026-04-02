@@ -2,33 +2,31 @@ name: Fetch PGE Tenders
 
 on:
   schedule:
-    - cron: '0 7,13,19 * * 1-5'   # pon-pt o 7:00, 13:00, 19:00
-  workflow_dispatch:                 # przycisk ręcznego uruchomienia
+    - cron: '0 7,13,19 * * 1-5'
+  workflow_dispatch:
 
 jobs:
   fetch:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          
+
       - name: Install dependencies
         run: npm install
-        
-      - name: Install Playwright browsers
-        run: npx playwright install chromium --with-deps
-        
+
       - name: Fetch PGE tenders
         run: node scripts/fetch-pge.js
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          
+          SCRAPINGBEE_API_KEY: ${{ secrets.SCRAPINGBEE_API_KEY }}
+
       - name: Report status
         if: failure()
-        run: echo "Scraper nie powiódł się - sprawdź logi powyżej"
+        run: echo 'Scraper nie powiodl sie - sprawdz logi powyzej'
